@@ -54,6 +54,7 @@ import androidx.core.view.GestureDetectorCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import org.json.JSONObject
+import org.json.JSONArray
 import java.net.URISyntaxException
 import java.net.URLDecoder
 import android.util.Base64
@@ -68,6 +69,7 @@ class MainActivity : AppCompatActivity() {
 //    private lateinit var binding: ActivityMainBinding
 
     private lateinit var webView: WebView
+    private lateinit var nativeVietnameseTranslator: NativeVietnameseTranslator
     private lateinit var gestureDetector: GestureDetectorCompat
     private var fileUploadCallback: ValueCallback<Array<Uri>>? = null
     private lateinit var fileChooserLauncher: ActivityResultLauncher<Intent>
@@ -260,8 +262,10 @@ class MainActivity : AppCompatActivity() {
             webView.clearCache(true)
         }
 
-        // 为 blob: 链接下载注入 JS 接口
+        // Native translation bridge; only exposes text translation to page JavaScript.
+        nativeVietnameseTranslator = NativeVietnameseTranslator()
         webView.addJavascriptInterface(JsInterface(this), "JsBridge")
+        webView.addJavascriptInterface(TranslationBridge(), "NativeTranslation")
 
         // inject js
         webView.webViewClient = MyWebViewClient(debug)
@@ -381,6 +385,7 @@ class MainActivity : AppCompatActivity() {
         if (customView != null) {
             hideCustomView()
         }
+        if (::nativeVietnameseTranslator.isInitialized) nativeVietnameseTranslator.close()
         webView.destroy()
         super.onDestroy()
     }
@@ -548,6 +553,44 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             e.printStackTrace()
             null
+        }
+    }
+
+    /** Receives translation batches from the page and returns translated text by stable node ID. */
+    inner class TranslationBridge {
+        @JavascriptInterface
+        fun translateBatch(payload: String) {
+            val items = try {
+                val array = JSONArray(payload)
+                buildList {
+                    for (index in 0 until array.length()) {
+                        val item = array.optJSONObject(index) ?: continue
+                        val id = item.optString("id")
+                        val text = item.optString("text")
+                        if (id.isNotBlank() && text.isNotBlank()) add(NativeVietnameseTranslator.TextItem(id, text))
+                    }
+                }
+            } catch (error: Exception) {
+                Log.e("NativeTranslation", "Invalid translation payload", error)
+                return
+            }
+
+            if (items.isEmpty() || !::nativeVietnameseTranslator.isInitialized) return
+            nativeVietnameseTranslator.translateBatch(items) { translated ->
+                val result = JSONArray()
+                translated.forEach { (id, text) ->
+                    result.put(JSONObject().put("id", id).put("text", text))
+                }
+                val encoded = JSONObject.quote(result.toString())
+                runOnUiThread {
+                    if (!isFinishing && !isDestroyed) {
+                        webView.evaluateJavascript(
+                            "window.__applyNativeTranslations && window.__applyNativeTranslations(JSON.parse($encoded));",
+                            null
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -1045,6 +1088,14 @@ class MainActivity : AppCompatActivity() {
             """.trimIndent()
 
             view?.evaluateJavascript(blobInterceptor, null)
+
+            // Automatically translate the page and observe later DOM changes (SPA, menus, popups).
+            try {
+                val translationScript = assets.open("auto-translate.js").bufferedReader().use { it.readText() }
+                view?.evaluateJavascript(translationScript, null)
+            } catch (error: Exception) {
+                Log.e("NativeTranslation", "Unable to inject translation script", error)
+            }
         }
 
         override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
