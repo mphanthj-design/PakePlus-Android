@@ -13,6 +13,8 @@ lifecycleViewmodelKtx = "2.6.1"
 navigationFragmentKtx = "2.6.0"
 navigationUiKtx = "2.6.0"
 webkit = "1.15.0"
+mlkitTranslate = "17.0.3"
+mlkitLanguageId = "17.0.5"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -27,8 +29,9 @@ androidx-lifecycle-viewmodel-ktx = { group = "androidx.lifecycle", name = "lifec
 androidx-navigation-fragment-ktx = { group = "androidx.navigation", name = "navigation-fragment-ktx", version.ref = "navigationFragmentKtx" }
 androidx-navigation-ui-ktx = { group = "androidx.navigation", name = "navigation-ui-ktx", version.ref = "navigationUiKtx" }
 androidx-webkit = { group = "androidx.webkit", name = "webkit", version.ref = "webkit" }
+mlkit-translate = { group = "com.google.mlkit", name = "translate", version.ref = "mlkitTranslate" }
+mlkit-languageid = { group = "com.google.mlkit", name = "language-id", version.ref = "mlkitLanguageId" }
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }
 jetbrainsKotlinAndroid = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
-
