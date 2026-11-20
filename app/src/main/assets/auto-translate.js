@@ -6,6 +6,39 @@
   var pageToken = String(Date.now()) + '-' + Math.random().toString(36).slice(2);
   var translationEnabled = true;
   var controlButton = null;
+  var siteSwitcher = null;
+
+  function installSiteSwitcher() {
+    if (siteSwitcher || !document.body) return;
+    siteSwitcher = document.createElement('div');
+    siteSwitcher.setAttribute('translate', 'no');
+    siteSwitcher.setAttribute('data-native-translation-ui', 'true');
+    siteSwitcher.style.cssText = [
+      'position:fixed', 'top:calc(12px + env(safe-area-inset-top, 0px))',
+      'left:50%', 'transform:translateX(-50%)', 'z-index:2147483646',
+      'display:flex', 'gap:5px', 'padding:5px', 'border-radius:24px',
+      'background:rgba(32,33,36,.94)', 'border:1px solid rgba(255,255,255,.2)',
+      'box-shadow:0 2px 12px rgba(0,0,0,.25)', 'font:600 12px Arial,sans-serif'
+    ].join(';');
+
+    function addSiteButton(label, url, host) {
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = label;
+      button.style.cssText = 'border:0;border-radius:18px;padding:8px 13px;background:' +
+        (location.hostname === host ? '#8ab4f8' : '#3c4043') +
+        ';color:' + (location.hostname === host ? '#202124' : '#fff') +
+        ';font:600 12px Arial,sans-serif;min-height:34px;';
+      button.addEventListener('click', function () {
+        if (location.hostname !== host) location.href = url;
+      });
+      siteSwitcher.appendChild(button);
+    }
+
+    addSiteButton('Stitch', 'https://stitch.withgoogle.com/', 'stitch.withgoogle.com');
+    addSiteButton('DeepWiki', 'https://deepwiki.com/', 'deepwiki.com');
+    document.body.appendChild(siteSwitcher);
+  }
 
   function updateControlButton() {
     if (!controlButton) return;
