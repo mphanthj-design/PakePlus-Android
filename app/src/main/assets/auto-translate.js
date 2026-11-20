@@ -14,15 +14,14 @@
   var translatedNodes = new WeakSet();
   var translatedValue = new WeakMap();
   var attemptedNodes = new WeakSet();
+  var attributeState = new WeakMap();
   var ignoredTags = new Set([
-    'script', 'style', 'noscript', 'textarea', 'option', 'code', 'pre',
-    'input', 'select', 'button', 'svg', 'math'
+    'script', 'style', 'noscript', 'option', 'code', 'pre', 'svg', 'math'
   ]);
+  var translatableAttributes = ['placeholder', 'title', 'aria-label', 'alt'];
 
-  function isIgnored(node) {
-    var element = node && node.parentElement;
-    if (!element) return true;
-    if (element.closest('[contenteditable="true"],[aria-hidden="true"],[translate="no"]')) return true;
+  function isIgnoredElement(element) {
+    if (!element || element.closest('[contenteditable="true"],[aria-hidden="true"],[translate="no"]')) return true;
     for (var current = element; current && current !== document.documentElement; current = current.parentElement) {
       if (ignoredTags.has((current.tagName || '').toLowerCase())) return true;
       var style;
@@ -32,6 +31,10 @@
     return false;
   }
 
+  function isIgnored(node) {
+    return !node || !node.parentElement || isIgnoredElement(node.parentElement);
+  }
+
   function addNode(node) {
     if (!node || node.nodeType !== Node.TEXT_NODE || translatedNodes.has(node) || attemptedNodes.has(node) || isIgnored(node)) return;
     var value = node.nodeValue || '';
@@ -39,9 +42,32 @@
     if (!originalText.has(node)) originalText.set(node, value);
     attemptedNodes.add(node);
     var id = String(nextId++);
-    pending.set(id, node);
+    pending.set(id, { node: node, attribute: null });
     queue.push({ id: id, text: value });
     schedule();
+  }
+
+  function addAttributes(element) {
+    if (!element || element.nodeType !== Node.ELEMENT_NODE || isIgnoredElement(element)) return;
+    var states = attributeState.get(element);
+    if (!states) {
+      states = new Map();
+      attributeState.set(element, states);
+    }
+    translatableAttributes.forEach(function (name) {
+      if (!element.hasAttribute(name)) return;
+      var value = element.getAttribute(name) || '';
+      if (!value.trim() || value.trim().length < 2) return;
+      var previous = states.get(name);
+      if (previous && (previous.pending || previous.attempted) && value === previous.original) return;
+      if (previous && value === previous.translated) return;
+      var state = { original: value, translated: null, pending: true, attempted: true };
+      states.set(name, state);
+      var id = String(nextId++);
+      pending.set(id, { node: element, attribute: name, state: state });
+      queue.push({ id: id, text: value });
+      schedule();
+    });
   }
 
   function scan(root) {
@@ -51,10 +77,13 @@
       return;
     }
     if (root.nodeType !== Node.ELEMENT_NODE && root !== document) return;
-    if (root.nodeType === Node.ELEMENT_NODE && ignoredTags.has((root.tagName || '').toLowerCase())) return;
-    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    if (root.nodeType === Node.ELEMENT_NODE) addAttributes(root);
+    var textWalker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     var node;
-    while ((node = walker.nextNode())) addNode(node);
+    while ((node = textWalker.nextNode())) addNode(node);
+    var elementWalker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+    var element;
+    while ((element = elementWalker.nextNode())) addAttributes(element);
   }
 
   function schedule() {
@@ -74,7 +103,8 @@
     try {
       window.NativeTranslation.translateBatch(JSON.stringify(batch));
     } catch (error) {
-      batch.forEach(function (item) { pending.delete(item.id); });
+      activeIds.forEach(function (id) { pending.delete(id); });
+      activeIds = [];
       sending = false;
       if (queue.length) schedule();
     }
@@ -83,17 +113,29 @@
   window.__applyNativeTranslations = function (results) {
     try {
       (results || []).forEach(function (item) {
-        var node = pending.get(String(item.id));
-        pending.delete(String(item.id));
-        if (!node || !node.isConnected || typeof item.text !== 'string' || !item.text.trim()) return;
-        if (isIgnored(node)) return;
-        if (node.nodeValue !== originalText.get(node)) return;
-        translatedNodes.add(node);
-        translatedValue.set(node, item.text);
-        node.nodeValue = item.text;
+        var id = String(item.id);
+        var entry = pending.get(id);
+        if (!entry || !entry.node || !entry.node.isConnected || typeof item.text !== 'string' || !item.text.trim()) return;
+        if (entry.attribute) {
+          var element = entry.node;
+          if (isIgnoredElement(element) || element.getAttribute(entry.attribute) !== entry.state.original) return;
+          entry.state.pending = false;
+          entry.state.translated = item.text;
+          element.setAttribute(entry.attribute, item.text);
+        } else {
+          var textNode = entry.node;
+          if (isIgnored(textNode) || textNode.nodeValue !== originalText.get(textNode)) return;
+          translatedNodes.add(textNode);
+          translatedValue.set(textNode, item.text);
+          textNode.nodeValue = item.text;
+        }
       });
     } finally {
-      activeIds.forEach(function (id) { pending.delete(id); });
+      activeIds.forEach(function (id) {
+        var entry = pending.get(id);
+        if (entry && entry.state) entry.state.pending = false;
+        pending.delete(id);
+      });
       activeIds = [];
       sending = false;
       if (queue.length) schedule();
@@ -114,16 +156,24 @@
           originalText.delete(target);
           addNode(target);
         }
-        mutation.addedNodes && mutation.addedNodes.forEach(function (node) { scan(node); });
+        if (mutation.type === 'attributes') {
+          addAttributes(mutation.target);
+        }
+        mutation.addedNodes && mutation.addedNodes.forEach(function (added) { scan(added); });
       });
     });
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: translatableAttributes
+    });
   }
 
   if (document.body) installObserver();
   else document.addEventListener('DOMContentLoaded', installObserver, { once: true });
 
-  // Re-scan after route changes in single-page applications.
   var lastUrl = location.href;
   window.setInterval(function () {
     if (location.href !== lastUrl) {
