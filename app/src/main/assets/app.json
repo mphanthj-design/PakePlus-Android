@@ -1,7 +1,7 @@
 {
-    "name": "Stitch Việt",
+    "name": "AI Web Việt",
     "version": "1.0.0",
-    "description": "Google Stitch với hỗ trợ dịch giao diện sang tiếng Việt",
+    "description": "Stitch và DeepWiki với hỗ trợ dịch giao diện tiếng Việt",
     "author": "1024coder",
     "webUrl": "https://stitch.withgoogle.com/",
     "debug": false,
