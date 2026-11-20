@@ -29,49 +29,59 @@ class NativeVietnameseTranslator {
             return
         }
 
-        val output = mutableListOf<Pair<String, String>>()
-        var index = 0
+        val results = arrayOfNulls<Pair<String, String>>(items.size)
+        var remaining = items.size
+        var completed = false
+        val completionLock = Any()
 
-        fun processNext() {
-            if (closed || index >= items.size) {
-                onComplete(output)
-                return
+        fun finish(index: Int, result: Pair<String, String>? = null) {
+            var finalResults: List<Pair<String, String>>? = null
+            synchronized(completionLock) {
+                if (result != null) results[index] = result
+                remaining--
+                if (remaining == 0 && !completed) {
+                    completed = true
+                    finalResults = results.filterNotNull()
+                }
             }
+            finalResults?.let { onComplete(it) }
+        }
 
-            val item = items[index++]
+        items.forEachIndexed { index, item ->
             val text = item.text.trim()
-            if (text.isEmpty()) {
-                processNext()
-                return
+            if (text.isEmpty() || closed) {
+                finish(index)
+                return@forEachIndexed
             }
 
             languageIdentifier.identifyLanguage(text)
                 .addOnSuccessListener { languageTag ->
                     if (closed || languageTag == "und") {
-                        processNext()
+                        finish(index)
                         return@addOnSuccessListener
                     }
 
                     val sourceLanguage = TranslateLanguage.fromLanguageTag(languageTag)
                     if (sourceLanguage == null || sourceLanguage == TranslateLanguage.VIETNAMESE) {
-                        processNext()
+                        finish(index)
                         return@addOnSuccessListener
                     }
 
                     val cacheKey = sourceLanguage + ":" + text
                     val cached = synchronized(translationCache) { translationCache[cacheKey] }
                     if (cached != null) {
-                        output.add(item.id to cached)
-                        processNext()
+                        finish(index, item.id to cached)
                         return@addOnSuccessListener
                     }
 
-                    val translator = translators.getOrPut(sourceLanguage) {
-                        val options = TranslatorOptions.Builder()
-                            .setSourceLanguage(sourceLanguage)
-                            .setTargetLanguage(TranslateLanguage.VIETNAMESE)
-                            .build()
-                        Translation.getClient(options)
+                    val translator = synchronized(translators) {
+                        translators.getOrPut(sourceLanguage) {
+                            val options = TranslatorOptions.Builder()
+                                .setSourceLanguage(sourceLanguage)
+                                .setTargetLanguage(TranslateLanguage.VIETNAMESE)
+                                .build()
+                            Translation.getClient(options)
+                        }
                     }
 
                     translator.downloadModelIfNeeded(downloadConditions)
@@ -80,35 +90,36 @@ class NativeVietnameseTranslator {
                                 .addOnSuccessListener { translated ->
                                     if (!closed && translated.isNotBlank()) {
                                         synchronized(translationCache) { translationCache[cacheKey] = translated }
-                                        output.add(item.id to translated)
+                                        finish(index, item.id to translated)
+                                    } else {
+                                        finish(index)
                                     }
-                                    processNext()
                                 }
                                 .addOnFailureListener { error ->
                                     Log.w("NativeTranslation", "Text translation failed", error)
-                                    processNext()
+                                    finish(index)
                                 }
                         }
                         .addOnFailureListener { error ->
                             Log.w("NativeTranslation", "Language model download failed for " + sourceLanguage, error)
-                            processNext()
+                            finish(index)
                         }
                 }
                 .addOnFailureListener { error ->
                     Log.w("NativeTranslation", "Language identification failed", error)
-                    processNext()
+                    finish(index)
                 }
         }
-
-        processNext()
     }
 
     fun close() {
         if (closed) return
         closed = true
         languageIdentifier.close()
-        translators.values.forEach { it.close() }
-        translators.clear()
+        synchronized(translators) {
+            translators.values.forEach { it.close() }
+            translators.clear()
+        }
         synchronized(translationCache) { translationCache.clear() }
     }
 }
