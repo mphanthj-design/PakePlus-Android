@@ -560,8 +560,11 @@ class MainActivity : AppCompatActivity() {
     inner class TranslationBridge {
         @JavascriptInterface
         fun translateBatch(payload: String) {
+            val pageToken: String
             val items = try {
-                val array = JSONArray(payload)
+                val request = JSONObject(payload)
+                pageToken = request.optString("token")
+                val array = request.optJSONArray("items") ?: return
                 buildList {
                     for (index in 0 until array.length()) {
                         val item = array.optJSONObject(index) ?: continue
@@ -575,17 +578,18 @@ class MainActivity : AppCompatActivity() {
                 return
             }
 
-            if (items.isEmpty() || !::nativeVietnameseTranslator.isInitialized) return
+            if (pageToken.isBlank() || items.isEmpty() || !::nativeVietnameseTranslator.isInitialized) return
             nativeVietnameseTranslator.translateBatch(items) { translated ->
                 val result = JSONArray()
                 translated.forEach { (id, text) ->
                     result.put(JSONObject().put("id", id).put("text", text))
                 }
-                val encoded = result.toString()
+                val encodedToken = JSONObject.quote(pageToken)
+                val encodedResults = result.toString()
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) {
                         webView.evaluateJavascript(
-                            "window.__applyNativeTranslations && window.__applyNativeTranslations($encoded);",
+                            "window.__applyNativeTranslations && window.__applyNativeTranslations($encodedToken, $encodedResults);",
                             null
                         )
                     }
