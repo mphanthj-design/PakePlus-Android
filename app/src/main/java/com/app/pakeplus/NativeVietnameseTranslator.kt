@@ -1,84 +1,114 @@
 package com.app.pakeplus
 
-import android.webkit.WebView
+import android.util.Log
 import com.google.mlkit.common.model.DownloadConditions
 import com.google.mlkit.nl.languageid.LanguageIdentification
 import com.google.mlkit.nl.translate.TranslateLanguage
 import com.google.mlkit.nl.translate.Translation
+import com.google.mlkit.nl.translate.Translator
 import com.google.mlkit.nl.translate.TranslatorOptions
 
-/** Native ML Kit integration for automatic translation of visible WebView text. */
+/**
+ * On-device translation service used by the WebView bridge.
+ * Translators are reused per source language and cached results avoid repeat work.
+ */
 class NativeVietnameseTranslator {
+    data class TextItem(val id: String, val text: String)
+
     private val languageIdentifier = LanguageIdentification.getClient()
-
-    fun translatePage(webView: WebView) {
-        webView.evaluateJavascript(
-            """
-            (function () {
-              var nodes = [];
-              var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
-                acceptNode: function(node) {
-                  var text = (node.textValue || node.nodeValue || '').trim();
-                  if (!text) return NodeFilter.FILTER_REJECT;
-                  var parent = node.parentElement;
-                  if (!parent) return NodeFilter.FILTER_REJECT;
-                  var tag = parent.tagName ? parent.tagName.toLowerCase() : '';
-                  if (['script','style','textarea','option','code','pre'].includes(tag)) return NodeFilter.FILTER_REJECT;
-                  if (parent.closest('[aria-hidden="true"], [contenteditable="true"]')) return NodeFilter.FILTER_REJECT;
-                  return NodeFilter.FILTER_ACCEPT;
-                }
-              });
-              var node;
-              while ((node = walker.nextNode())) nodes.push(node.nodeValue);
-              window.JsBridgeNativeTranslationRequested(JSON.stringify(nodes));
-            })();
-            """.trimIndent(),
-            null
-        )
+    private val translators = mutableMapOf<String, Translator>()
+    private val translationCache = object : LinkedHashMap<String, String>(600, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > 500
     }
+    private val downloadConditions = DownloadConditions.Builder().build()
+    private var closed = false
 
-    fun translateTexts(texts: List<String>, onResult: (String) -> Unit, onError: (Exception) -> Unit) {
-        val sourceText = texts.joinToString("\n")
-        if (sourceText.isBlank()) return
+    fun translateBatch(items: List<TextItem>, onComplete: (List<Pair<String, String>>) -> Unit) {
+        if (closed || items.isEmpty()) {
+            onComplete(emptyList())
+            return
+        }
 
-        languageIdentifier.identifyLanguage(sourceText)
-            .addOnSuccessListener { sourceLanguage ->
-                if (sourceLanguage == TranslateLanguage.VIETNAMESE || sourceLanguage == "und") {
-                    onResult("[]")
-                    return@addOnSuccessListener
-                }
+        val output = mutableListOf<Pair<String, String>>()
+        var index = 0
 
-                val options = TranslatorOptions.Builder()
-                    .setSourceLanguage(sourceLanguage)
-                    .setTargetLanguage(TranslateLanguage.VIETNAMESE)
-                    .build()
-
-                val translator = Translation.getClient(options)
-                val conditions = DownloadConditions.Builder()
-                    .requireWifi()
-                    .build()
-
-                translator.downloadModelIfNeeded(conditions)
-                    .addOnSuccessListener {
-                        translator.translate(sourceText)
-                            .addOnSuccessListener { translated ->
-                                onResult(translated)
-                                translator.close()
-                            }
-                            .addOnFailureListener { error ->
-                                onError(error)
-                                translator.close()
-                            }
-                    }
-                    .addOnFailureListener { error ->
-                        onError(error)
-                        translator.close()
-                    }
+        fun processNext() {
+            if (closed || index >= items.size) {
+                onComplete(output)
+                return
             }
-            .addOnFailureListener(onError)
+
+            val item = items[index++]
+            val text = item.text.trim()
+            if (text.isEmpty()) {
+                processNext()
+                return
+            }
+
+            languageIdentifier.identifyLanguage(text)
+                .addOnSuccessListener { languageTag ->
+                    if (closed || languageTag == "und") {
+                        processNext()
+                        return@addOnSuccessListener
+                    }
+
+                    val sourceLanguage = TranslateLanguage.fromLanguageTag(languageTag)
+                    if (sourceLanguage == null || sourceLanguage == TranslateLanguage.VIETNAMESE) {
+                        processNext()
+                        return@addOnSuccessListener
+                    }
+
+                    val cacheKey = sourceLanguage + ":" + text
+                    val cached = synchronized(translationCache) { translationCache[cacheKey] }
+                    if (cached != null) {
+                        output.add(item.id to cached)
+                        processNext()
+                        return@addOnSuccessListener
+                    }
+
+                    val translator = translators.getOrPut(sourceLanguage) {
+                        val options = TranslatorOptions.Builder()
+                            .setSourceLanguage(sourceLanguage)
+                            .setTargetLanguage(TranslateLanguage.VIETNAMESE)
+                            .build()
+                        Translation.getClient(options)
+                    }
+
+                    translator.downloadModelIfNeeded(downloadConditions)
+                        .addOnSuccessListener {
+                            translator.translate(text)
+                                .addOnSuccessListener { translated ->
+                                    if (!closed && translated.isNotBlank()) {
+                                        synchronized(translationCache) { translationCache[cacheKey] = translated }
+                                        output.add(item.id to translated)
+                                    }
+                                    processNext()
+                                }
+                                .addOnFailureListener { error ->
+                                    Log.w("NativeTranslation", "Text translation failed", error)
+                                    processNext()
+                                }
+                        }
+                        .addOnFailureListener { error ->
+                            Log.w("NativeTranslation", "Language model download failed for " + sourceLanguage, error)
+                            processNext()
+                        }
+                }
+                .addOnFailureListener { error ->
+                    Log.w("NativeTranslation", "Language identification failed", error)
+                    processNext()
+                }
+        }
+
+        processNext()
     }
 
     fun close() {
+        if (closed) return
+        closed = true
         languageIdentifier.close()
+        translators.values.forEach { it.close() }
+        translators.clear()
+        synchronized(translationCache) { translationCache.clear() }
     }
 }
