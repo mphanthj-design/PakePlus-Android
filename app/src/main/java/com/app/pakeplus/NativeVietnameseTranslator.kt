@@ -20,7 +20,7 @@ class NativeVietnameseTranslator {
     private val translationCache = object : LinkedHashMap<String, String>(600, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > 500
     }
-    private val downloadConditions = DownloadConditions.Builder().build()
+    private val downloadConditions = DownloadConditions.Builder().requireWifi().build()
     private var closed = false
 
     fun translateBatch(items: List<TextItem>, onComplete: (List<Pair<String, String>>) -> Unit) {
