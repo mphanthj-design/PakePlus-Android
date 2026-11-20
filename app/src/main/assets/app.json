@@ -1,9 +1,9 @@
 {
-    "name": "PakePlus",
+    "name": "Stitch Việt",
     "version": "1.0.0",
-    "description": "A sample mobile application by PakePlus",
+    "description": "Google Stitch với hỗ trợ dịch giao diện sang tiếng Việt",
     "author": "1024coder",
-    "webUrl": "https://pphtml.pages.dev/app",
+    "webUrl": "https://stitch.withgoogle.com/",
     "debug": false,
     "userAgent": "",
     "fullScreen": false,
