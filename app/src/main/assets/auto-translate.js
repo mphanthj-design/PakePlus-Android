@@ -165,7 +165,7 @@
           addNode(target);
         }
         if (mutation.type === 'attributes') {
-          addAttributes(mutation.target);
+          scan(mutation.target);
         }
         mutation.addedNodes && mutation.addedNodes.forEach(function (added) { scan(added); });
       });
@@ -174,8 +174,7 @@
       childList: true,
       subtree: true,
       characterData: true,
-      attributes: true,
-      attributeFilter: translatableAttributes
+      attributes: true
     });
   }
 
