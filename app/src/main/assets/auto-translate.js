@@ -97,14 +97,8 @@
   var translatableAttributes = ['placeholder', 'title', 'aria-label', 'alt'];
 
   function isIgnoredElement(element) {
-    if (!element || element.closest('[contenteditable="true"],[aria-hidden="true"],[translate="no"]')) return true;
-    for (var current = element; current && current !== document.documentElement; current = current.parentElement) {
-      if (ignoredAttributeTags.has((current.tagName || '').toLowerCase())) return true;
-      var style;
-      try { style = window.getComputedStyle(current); } catch (_) { return true; }
-      if (style.display === 'none' || style.visibility === 'hidden') return true;
-    }
-    return false;
+    if (!element || element.closest('[contenteditable="true"],[aria-hidden="true"],[translate="no"],[hidden]')) return true;
+    return ignoredAttributeTags.has((element.tagName || '').toLowerCase());
   }
 
   function isIgnored(node) {
@@ -118,7 +112,7 @@
   function addNode(node) {
     if (!translationEnabled || !node || node.nodeType !== Node.TEXT_NODE || translatedNodes.has(node) || attemptedNodes.has(node) || isIgnored(node)) return;
     var value = node.nodeValue || '';
-    if (!value.trim() || value.trim().length < 2) return;
+    if (!value.trim() || value.trim().length < 2 || value.length > 500) return;
     if (!originalText.has(node)) originalText.set(node, value);
     attemptedNodes.add(node);
     var id = String(nextId++);
@@ -137,7 +131,7 @@
     translatableAttributes.forEach(function (name) {
       if (!element.hasAttribute(name)) return;
       var value = element.getAttribute(name) || '';
-      if (!value.trim() || value.trim().length < 2) return;
+      if (!value.trim() || value.trim().length < 2 || value.length > 300) return;
       var previous = states.get(name);
       if (previous && (previous.pending || previous.attempted) && value === previous.original) return;
       if (previous && value === previous.translated) return;
@@ -181,7 +175,7 @@
   function sendNext() {
     if (!translationEnabled || sending || queue.length === 0) return;
     sending = true;
-    var batch = queue.splice(0, 20);
+    var batch = queue.splice(0, 8);
     activeIds = batch.map(function (item) { return item.id; });
     try {
       window.NativeTranslation.translateBatch(JSON.stringify({ token: pageToken, items: batch }));
@@ -242,7 +236,7 @@
           addNode(target);
         }
         if (mutation.type === 'attributes') {
-          scan(mutation.target);
+          addAttributes(mutation.target);
         }
         mutation.addedNodes && mutation.addedNodes.forEach(function (added) { scan(added); });
       });
@@ -252,7 +246,7 @@
       subtree: true,
       characterData: true,
       attributes: true,
-      attributeFilter: ['class', 'style', 'placeholder', 'title', 'aria-label', 'alt']
+      attributeFilter: ['placeholder', 'title', 'aria-label', 'alt']
     });
   }
 
