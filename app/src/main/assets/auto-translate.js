@@ -8,6 +8,7 @@
   var queue = [];
   var scheduled = false;
   var sending = false;
+  var activeIds = [];
   var observer = null;
   var originalText = new WeakMap();
   var translatedNodes = new WeakSet();
@@ -69,6 +70,7 @@
     if (sending || queue.length === 0) return;
     sending = true;
     var batch = queue.splice(0, 20);
+    activeIds = batch.map(function (item) { return item.id; });
     try {
       window.NativeTranslation.translateBatch(JSON.stringify(batch));
     } catch (error) {
@@ -91,6 +93,8 @@
         node.nodeValue = item.text;
       });
     } finally {
+      activeIds.forEach(function (id) { pending.delete(id); });
+      activeIds = [];
       sending = false;
       if (queue.length) schedule();
     }
