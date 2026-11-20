@@ -560,12 +560,12 @@ class MainActivity : AppCompatActivity() {
     inner class TranslationBridge {
         @JavascriptInterface
         fun translateBatch(payload: String) {
-            val pageToken: String
-            val items = try {
+            var pageToken = ""
+            val items: List<NativeVietnameseTranslator.TextItem> = try {
                 val request = JSONObject(payload)
                 pageToken = request.optString("token")
                 val array = request.optJSONArray("items") ?: return
-                buildList {
+                buildList<NativeVietnameseTranslator.TextItem> {
                     for (index in 0 until array.length()) {
                         val item = array.optJSONObject(index) ?: continue
                         val id = item.optString("id")
