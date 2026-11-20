@@ -581,11 +581,11 @@ class MainActivity : AppCompatActivity() {
                 translated.forEach { (id, text) ->
                     result.put(JSONObject().put("id", id).put("text", text))
                 }
-                val encoded = JSONObject.quote(result.toString())
+                val encoded = result.toString()
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) {
                         webView.evaluateJavascript(
-                            "window.__applyNativeTranslations && window.__applyNativeTranslations(JSON.parse($encoded));",
+                            "window.__applyNativeTranslations && window.__applyNativeTranslations($encoded);",
                             null
                         )
                     }
