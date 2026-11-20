@@ -1,4 +1,5 @@
 name: Android Debug APK
+run-name: Debug APK • ${{ github.ref_name }} • #${{ github.run_number }}
 
 on:
   push:
