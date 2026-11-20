@@ -161,8 +161,9 @@
   }
 
   window.__applyNativeTranslations = function (token, results) {
-    if (token !== pageToken || !translationEnabled) return;
+    if (token !== pageToken) return;
     try {
+      if (!translationEnabled) return;
       (results || []).forEach(function (item) {
         var id = String(item.id);
         var entry = pending.get(id);
