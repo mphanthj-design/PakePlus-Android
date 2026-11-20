@@ -9,19 +9,21 @@ import com.google.mlkit.nl.translate.Translator
 import com.google.mlkit.nl.translate.TranslatorOptions
 
 /**
- * On-device translation service used by the WebView bridge.
- * Translators are reused per source language and cached results avoid repeat work.
+ * On-device translation service. Model downloads and translations are serialized
+ * per WebView batch to avoid starting many competing ML Kit tasks at once.
  */
 class NativeVietnameseTranslator {
     data class TextItem(val id: String, val text: String)
 
     private val languageIdentifier = LanguageIdentification.getClient()
     private val translators = mutableMapOf<String, Translator>()
+    private val downloadedLanguages = mutableSetOf<String>()
     private val translationCache = object : LinkedHashMap<String, String>(600, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > 500
     }
-    private val downloadConditions = DownloadConditions.Builder().requireWifi().build()
-    private var closed = false
+    // Allow model download on mobile data as well as Wi-Fi.
+    private val downloadConditions = DownloadConditions.Builder().build()
+    @Volatile private var closed = false
 
     fun translateBatch(items: List<TextItem>, onComplete: (List<Pair<String, String>>) -> Unit) {
         if (closed || items.isEmpty()) {
@@ -29,48 +31,47 @@ class NativeVietnameseTranslator {
             return
         }
 
-        val results = arrayOfNulls<Pair<String, String>>(items.size)
-        var remaining = items.size
-        var completed = false
-        val completionLock = Any()
+        val results = mutableListOf<Pair<String, String>>()
+        var index = 0
 
-        fun finish(index: Int, result: Pair<String, String>? = null) {
-            var finalResults: List<Pair<String, String>>? = null
-            synchronized(completionLock) {
-                if (result != null) results[index] = result
-                remaining--
-                if (remaining == 0 && !completed) {
-                    completed = true
-                    finalResults = results.filterNotNull()
-                }
+        fun processNext() {
+            if (closed || index >= items.size) {
+                onComplete(results)
+                return
             }
-            finalResults?.let { onComplete(it) }
-        }
 
-        items.forEachIndexed { index, item ->
+            val item = items[index++]
             val text = item.text.trim()
-            if (text.isEmpty() || closed) {
-                finish(index)
-                return@forEachIndexed
+            if (text.isEmpty()) {
+                processNext()
+                return
             }
 
             languageIdentifier.identifyLanguage(text)
                 .addOnSuccessListener { languageTag ->
-                    if (closed || languageTag == "und") {
-                        finish(index)
+                    if (closed) {
+                        processNext()
                         return@addOnSuccessListener
                     }
 
-                    val sourceLanguage = TranslateLanguage.fromLanguageTag(languageTag)
+                    // Very short UI labels are often returned as "und".
+                    // These two supported sites primarily present English UI.
+                    val resolvedTag = if (languageTag == "und" && text.any { it in 'A'..'Z' || it in 'a'..'z' }) {
+                        TranslateLanguage.ENGLISH
+                    } else {
+                        languageTag
+                    }
+                    val sourceLanguage = TranslateLanguage.fromLanguageTag(resolvedTag)
                     if (sourceLanguage == null || sourceLanguage == TranslateLanguage.VIETNAMESE) {
-                        finish(index)
+                        processNext()
                         return@addOnSuccessListener
                     }
 
                     val cacheKey = sourceLanguage + ":" + text
                     val cached = synchronized(translationCache) { translationCache[cacheKey] }
                     if (cached != null) {
-                        finish(index, item.id to cached)
+                        results.add(item.id to cached)
+                        processNext()
                         return@addOnSuccessListener
                     }
 
@@ -84,32 +85,51 @@ class NativeVietnameseTranslator {
                         }
                     }
 
-                    translator.downloadModelIfNeeded(downloadConditions)
-                        .addOnSuccessListener {
-                            translator.translate(text)
-                                .addOnSuccessListener { translated ->
-                                    if (!closed && translated.isNotBlank()) {
-                                        synchronized(translationCache) { translationCache[cacheKey] = translated }
-                                        finish(index, item.id to translated)
-                                    } else {
-                                        finish(index)
-                                    }
-                                }
-                                .addOnFailureListener { error ->
-                                    Log.w("NativeTranslation", "Text translation failed", error)
-                                    finish(index)
-                                }
+                    fun translateText() {
+                        if (closed) {
+                            processNext()
+                            return
                         }
-                        .addOnFailureListener { error ->
-                            Log.w("NativeTranslation", "Language model download failed for " + sourceLanguage, error)
-                            finish(index)
-                        }
+                        translator.translate(text)
+                            .addOnSuccessListener { translated ->
+                                if (!closed && translated.isNotBlank()) {
+                                    synchronized(translationCache) { translationCache[cacheKey] = translated }
+                                    results.add(item.id to translated)
+                                }
+                                processNext()
+                            }
+                            .addOnFailureListener { error ->
+                                Log.w("NativeTranslation", "Text translation failed", error)
+                                processNext()
+                            }
+                    }
+
+                    val isModelReady = synchronized(downloadedLanguages) {
+                        downloadedLanguages.contains(sourceLanguage)
+                    }
+                    if (isModelReady) {
+                        translateText()
+                    } else {
+                        translator.downloadModelIfNeeded(downloadConditions)
+                            .addOnSuccessListener {
+                                synchronized(downloadedLanguages) {
+                                    downloadedLanguages.add(sourceLanguage)
+                                }
+                                translateText()
+                            }
+                            .addOnFailureListener { error ->
+                                Log.w("NativeTranslation", "Language model download failed for $sourceLanguage", error)
+                                processNext()
+                            }
+                    }
                 }
                 .addOnFailureListener { error ->
                     Log.w("NativeTranslation", "Language identification failed", error)
-                    finish(index)
+                    processNext()
                 }
         }
+
+        processNext()
     }
 
     fun close() {
@@ -120,6 +140,7 @@ class NativeVietnameseTranslator {
             translators.values.forEach { it.close() }
             translators.clear()
         }
+        synchronized(downloadedLanguages) { downloadedLanguages.clear() }
         synchronized(translationCache) { translationCache.clear() }
     }
 }
