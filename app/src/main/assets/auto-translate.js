@@ -11,6 +11,8 @@
   var observer = null;
   var originalText = new WeakMap();
   var translatedNodes = new WeakSet();
+  var translatedValue = new WeakMap();
+  var attemptedNodes = new WeakSet();
   var ignoredTags = new Set([
     'script', 'style', 'noscript', 'textarea', 'option', 'code', 'pre',
     'input', 'select', 'button', 'svg', 'math'
@@ -30,10 +32,11 @@
   }
 
   function addNode(node) {
-    if (!node || node.nodeType !== Node.TEXT_NODE || translatedNodes.has(node) || isIgnored(node)) return;
+    if (!node || node.nodeType !== Node.TEXT_NODE || translatedNodes.has(node) || attemptedNodes.has(node) || isIgnored(node)) return;
     var value = node.nodeValue || '';
     if (!value.trim() || value.trim().length < 2) return;
     if (!originalText.has(node)) originalText.set(node, value);
+    attemptedNodes.add(node);
     var id = String(nextId++);
     pending.set(id, node);
     queue.push({ id: id, text: value });
@@ -84,6 +87,7 @@
         if (isIgnored(node)) return;
         if (node.nodeValue !== originalText.get(node)) return;
         translatedNodes.add(node);
+        translatedValue.set(node, item.text);
         node.nodeValue = item.text;
       });
     } finally {
@@ -99,7 +103,10 @@
       mutations.forEach(function (mutation) {
         if (mutation.type === 'characterData') {
           var target = mutation.target;
-          if (translatedNodes.has(target)) return;
+          if (translatedNodes.has(target) && target.nodeValue === translatedValue.get(target)) return;
+          translatedNodes.delete(target);
+          translatedValue.delete(target);
+          attemptedNodes.delete(target);
           originalText.delete(target);
           addNode(target);
         }
