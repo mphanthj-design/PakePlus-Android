@@ -15,15 +15,16 @@
   var translatedValue = new WeakMap();
   var attemptedNodes = new WeakSet();
   var attributeState = new WeakMap();
-  var ignoredTags = new Set([
-    'script', 'style', 'noscript', 'option', 'code', 'pre', 'svg', 'math'
+  var ignoredTextTags = new Set([
+    'script', 'style', 'noscript', 'textarea', 'option', 'code', 'pre', 'svg', 'math'
   ]);
+  var ignoredAttributeTags = new Set(['script', 'style', 'noscript', 'svg', 'math', 'code', 'pre']);
   var translatableAttributes = ['placeholder', 'title', 'aria-label', 'alt'];
 
   function isIgnoredElement(element) {
     if (!element || element.closest('[contenteditable="true"],[aria-hidden="true"],[translate="no"]')) return true;
     for (var current = element; current && current !== document.documentElement; current = current.parentElement) {
-      if (ignoredTags.has((current.tagName || '').toLowerCase())) return true;
+      if (ignoredAttributeTags.has((current.tagName || '').toLowerCase())) return true;
       var style;
       try { style = window.getComputedStyle(current); } catch (_) { return true; }
       if (style.display === 'none' || style.visibility === 'hidden') return true;
@@ -32,7 +33,11 @@
   }
 
   function isIgnored(node) {
-    return !node || !node.parentElement || isIgnoredElement(node.parentElement);
+    if (!node || !node.parentElement || isIgnoredElement(node.parentElement)) return true;
+    for (var current = node.parentElement; current && current !== document.documentElement; current = current.parentElement) {
+      if (ignoredTextTags.has((current.tagName || '').toLowerCase())) return true;
+    }
+    return false;
   }
 
   function addNode(node) {
@@ -77,7 +82,10 @@
       return;
     }
     if (root.nodeType !== Node.ELEMENT_NODE && root !== document) return;
-    if (root.nodeType === Node.ELEMENT_NODE) addAttributes(root);
+    if (root.nodeType === Node.ELEMENT_NODE) {
+      addAttributes(root);
+      if (ignoredTextTags.has((root.tagName || '').toLowerCase())) return;
+    }
     var textWalker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     var node;
     while ((node = textWalker.nextNode())) addNode(node);
