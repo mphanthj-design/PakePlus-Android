@@ -3,6 +3,7 @@
   if (!window.NativeTranslation || !window.NativeTranslation.translateBatch) return;
   window.__nativeVietnameseTranslationInstalled = true;
 
+  var pageToken = String(Date.now()) + '-' + Math.random().toString(36).slice(2);
   var nextId = 1;
   var pending = new Map();
   var queue = [];
@@ -109,7 +110,7 @@
     var batch = queue.splice(0, 20);
     activeIds = batch.map(function (item) { return item.id; });
     try {
-      window.NativeTranslation.translateBatch(JSON.stringify(batch));
+      window.NativeTranslation.translateBatch(JSON.stringify({ token: pageToken, items: batch }));
     } catch (error) {
       activeIds.forEach(function (id) { pending.delete(id); });
       activeIds = [];
@@ -118,7 +119,8 @@
     }
   }
 
-  window.__applyNativeTranslations = function (results) {
+  window.__applyNativeTranslations = function (token, results) {
+    if (token !== pageToken) return;
     try {
       (results || []).forEach(function (item) {
         var id = String(item.id);
