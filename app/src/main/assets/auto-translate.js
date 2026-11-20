@@ -4,6 +4,47 @@
   window.__nativeVietnameseTranslationInstalled = true;
 
   var pageToken = String(Date.now()) + '-' + Math.random().toString(36).slice(2);
+  var translationEnabled = true;
+  var controlButton = null;
+
+  function updateControlButton() {
+    if (!controlButton) return;
+    controlButton.textContent = translationEnabled ? '文 A  ·  Dịch TV: BẬT' : '文 A  ·  Dịch TV: TẮT';
+    controlButton.setAttribute('aria-pressed', translationEnabled ? 'true' : 'false');
+    controlButton.title = translationEnabled ? 'Chạm để tắt dịch tự động sang tiếng Việt' : 'Chạm để bật dịch tự động sang tiếng Việt';
+    controlButton.style.opacity = translationEnabled ? '1' : '0.78';
+  }
+
+  function installTranslationControl() {
+    if (controlButton || !document.body) return;
+    controlButton = document.createElement('button');
+    controlButton.type = 'button';
+    controlButton.setAttribute('translate', 'no');
+    controlButton.setAttribute('data-native-translation-ui', 'true');
+    controlButton.setAttribute('aria-label', 'Bật hoặc tắt dịch tiếng Việt');
+    controlButton.style.cssText = [
+      'position:fixed', 'right:16px', 'bottom:calc(18px + env(safe-area-inset-bottom, 0px))',
+      'z-index:2147483647', 'border:1px solid rgba(255,255,255,.22)',
+      'border-radius:24px', 'padding:11px 15px', 'background:#202124',
+      'color:#fff', 'font:600 13px Arial,sans-serif', 'letter-spacing:.1px',
+      'box-shadow:0 3px 14px rgba(0,0,0,.35)', 'cursor:pointer',
+      'min-height:42px', '-webkit-tap-highlight-color:transparent'
+    ].join(';');
+    controlButton.addEventListener('click', function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      translationEnabled = !translationEnabled;
+      if (!translationEnabled) {
+        queue.length = 0;
+        pending.clear();
+      } else {
+        scan(document.body);
+      }
+      updateControlButton();
+    });
+    updateControlButton();
+    document.body.appendChild(controlButton);
+  }
   var nextId = 1;
   var pending = new Map();
   var queue = [];
@@ -42,7 +83,7 @@
   }
 
   function addNode(node) {
-    if (!node || node.nodeType !== Node.TEXT_NODE || translatedNodes.has(node) || attemptedNodes.has(node) || isIgnored(node)) return;
+    if (!translationEnabled || !node || node.nodeType !== Node.TEXT_NODE || translatedNodes.has(node) || attemptedNodes.has(node) || isIgnored(node)) return;
     var value = node.nodeValue || '';
     if (!value.trim() || value.trim().length < 2) return;
     if (!originalText.has(node)) originalText.set(node, value);
@@ -54,7 +95,7 @@
   }
 
   function addAttributes(element) {
-    if (!element || element.nodeType !== Node.ELEMENT_NODE || isIgnoredElement(element)) return;
+    if (!translationEnabled || !element || element.nodeType !== Node.ELEMENT_NODE || isIgnoredElement(element)) return;
     var states = attributeState.get(element);
     if (!states) {
       states = new Map();
@@ -77,7 +118,7 @@
   }
 
   function scan(root) {
-    if (!root) return;
+    if (!translationEnabled || !root) return;
     if (root.nodeType === Node.TEXT_NODE) {
       addNode(root);
       return;
@@ -105,7 +146,7 @@
   }
 
   function sendNext() {
-    if (sending || queue.length === 0) return;
+    if (!translationEnabled || sending || queue.length === 0) return;
     sending = true;
     var batch = queue.splice(0, 20);
     activeIds = batch.map(function (item) { return item.id; });
@@ -120,7 +161,7 @@
   }
 
   window.__applyNativeTranslations = function (token, results) {
-    if (token !== pageToken) return;
+    if (token !== pageToken || !translationEnabled) return;
     try {
       (results || []).forEach(function (item) {
         var id = String(item.id);
@@ -181,8 +222,13 @@
     });
   }
 
-  if (document.body) installObserver();
-  else document.addEventListener('DOMContentLoaded', installObserver, { once: true });
+  if (document.body) {
+    installObserver();
+    installTranslationControl();
+  } else document.addEventListener('DOMContentLoaded', function () {
+    installObserver();
+    installTranslationControl();
+  }, { once: true });
 
   var lastUrl = location.href;
   window.setInterval(function () {
