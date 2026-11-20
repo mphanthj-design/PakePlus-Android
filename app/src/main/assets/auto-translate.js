@@ -174,7 +174,8 @@
       childList: true,
       subtree: true,
       characterData: true,
-      attributes: true
+      attributes: true,
+      attributeFilter: ['class', 'style', 'placeholder', 'title', 'aria-label', 'alt']
     });
   }
 
